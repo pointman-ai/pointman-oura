@@ -65,6 +65,11 @@ fn form(body: &str) -> HashMap<String, String> {
     body.split('&').filter_map(|kv| kv.split_once('=')).map(|(k, v)| (un(k), un(v))).collect()
 }
 
+fn latest() -> String {
+    let d = (time::OffsetDateTime::now_utc() + time::Duration::hours(14)).date();
+    format!("{:04}-{:02}-{:02}", d.year(), u8::from(d.month()), d.day())
+}
+
 fn page(path: &str) -> Value {
     let day = |d: &str, score: i64| json!({"day": d, "score": score});
     match path.split('?').next().unwrap() {
@@ -84,6 +89,12 @@ fn page(path: &str) -> Value {
              "deep_sleep_duration": 5400, "rem_sleep_duration": 6000, "efficiency": 90, "average_hrv": 48,
              "lowest_heart_rate": 52, "bedtime_start": "2026-11-19T23:10:00+08:00",
              "bedtime_end": "2026-11-20T07:13:00+08:00", "sleep_phase_5_min": "4".repeat(400)}]}),
+        // dated in the wearer's time: the newest day anywhere, which can be after the UTC date
+        "/v2/usercollection/daily_stress" => json!({"data": [{"day": latest(), "stress_high": 3600}]}),
+        "/v2/usercollection/enhanced_tag" => {
+            json!({"data": [{"start_day": "2026-11-20", "tag_type_code": "tag_generic_caffeine"},
+            {"start_day": "2026-11-21", "tag_type_code": "tag_generic_alcohol"}]})
+        }
         "/v2/usercollection/heartrate" if path.contains("next_token=p2") => {
             json!({"data": [{"bpm": 61, "timestamp": "2026-11-20T01:10:00+00:00"}], "next_token": null})
         }
@@ -305,6 +316,17 @@ fn records_come_page_by_page_and_long_series_are_shortened() {
         .run("oura.data", json!({"kind": "sleep", "from": "2026-11-20", "to": "2026-11-20", "full": true}))
         .unwrap();
     assert!(full.result["text"].as_str().unwrap().contains(&"4".repeat(400)));
+}
+
+#[test]
+fn an_open_ended_range_keeps_the_wearers_newest_day_and_tags_keep_to_their_range() {
+    let fake = Fake::start();
+    let node = node(&fake, signed_in(FAR));
+    let stress = node.run("oura.data", json!({"kind": "daily_stress", "from": "2026-11-01"})).unwrap().result;
+    assert_eq!(stress["count"], 1, "the newest day is kept east of UTC too: {stress}");
+    assert!(stress["text"].as_str().unwrap().contains(&format!("to {}", latest())), "{stress}");
+    let tags = node.run("oura.data", json!({"kind": "enhanced_tag", "from": "2026-11-19", "to": "2026-11-20"}));
+    assert_eq!(tags.unwrap().result["count"], 1, "a tag's start_day after `to` is dropped");
 }
 
 #[test]

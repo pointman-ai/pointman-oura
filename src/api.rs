@@ -129,8 +129,14 @@ pub fn ymd(d: Date) -> String {
     d.format(format_description!("[year]-[month]-[day]")).expect("formats")
 }
 
+/// The latest day anywhere now (UTC+14), so an open-ended range keeps the wearer's newest day: Oura dates a day in
+/// the wearer's own time, and at UTC+8 a 07:00 waking is the day before in UTC.
 pub fn today() -> Date {
-    OffsetDateTime::now_utc().date()
+    latest_day(OffsetDateTime::now_utc())
+}
+
+pub fn latest_day(now: OffsetDateTime) -> Date {
+    (now + time::Duration::hours(14)).date()
 }
 
 /// A time for heartrate's query: RFC 3339 as given, or a day from its midnight UTC (`end` the day after, so the day
@@ -179,7 +185,8 @@ impl Api<'_> {
         }
     }
 
-    /// Every record of a kind between two days (that last day included), following `next_token`: at most 20 pages.
+    /// Every record of a kind between two days (that last day included), following `next_token`: at most 20 pages,
+    /// and more is an error that asks for a shorter range.
     pub fn records(&self, kind: &str, from: &str, to: &str) -> anyhow::Result<Vec<Value>> {
         let path = if kind == "vo2_max" { "vO2_max" } else { kind };
         let (fk, tk, start, end, last) = if kind == "heartrate" {
@@ -203,8 +210,12 @@ impl Api<'_> {
                 break;
             }
         }
+        if !next.is_empty() {
+            bail!("Oura has more than 20 pages of {kind} from {from} to {to}: ask for a shorter range");
+        }
         if let Some(last) = last {
-            out.retain(|r| r["day"].as_str().is_none_or(|d| d <= last.as_str()));
+            // a day's records carry `day`; enhanced_tag and rest_mode_period carry `start_day`
+            out.retain(|r| r["day"].as_str().or(r["start_day"].as_str()).is_none_or(|d| d <= last.as_str()));
         }
         Ok(out)
     }
@@ -233,6 +244,9 @@ mod tests {
         assert_eq!(instant("2026-11-20", false).unwrap(), "2026-11-20T00:00:00Z");
         assert_eq!(instant("2026-11-20", true).unwrap(), "2026-11-21T00:00:00Z");
         assert_eq!(instant("2026-11-20T08:00:00+08:00", true).unwrap(), "2026-11-20T08:00:00+08:00");
+        // 07:00 at UTC+8 is 23:00 UTC the day before: the wearer's day is the newest
+        let woke = OffsetDateTime::parse("2026-11-19T23:00:00Z", &Rfc3339).unwrap();
+        assert_eq!(ymd(latest_day(woke)), "2026-11-20");
         assert!(instant("soon", false).is_err());
     }
 
