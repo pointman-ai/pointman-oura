@@ -1,0 +1,173 @@
+# Oura on Pointman: every agent on the machines it's installed on reads a person's Oura data (sleep, readiness,
+# activity, heart rate, workouts and the rest of Oura's user collection), with any number of Oura accounts. Each
+# account is signed in from the apps (Oura's authorization-code flow with PKCE, coming back by redirect: nothing to
+# paste) and kept in the vault as oura.<label>, so every node uses the same sign-ins. On a hosted Pointman the sign-in
+# goes through Pointman's own Oura client, core's shared client, and the code is exchanged through core, so no client
+# secret reaches the extension. A self-hosted Pointman uses a client of its own (oura.client). It only reads.
+#
+# The commands' params and [settings] are written from proto/oura/v1/oura.proto (`<Verb>Params`, `Settings`) by
+# the SDK's `pointman-extension manifest write`: change the proto, then write them again.
+
+[extension]
+id = "oura"
+name = "Oura"
+version = "0.1.0"
+publisher = "aurelio"
+summary = "Oura health data for every agent: sleep, readiness, activity, heart rate and workouts, read only, with any number of Oura accounts."
+node = ">=0.4.12"
+platforms = ["macos-arm64", "macos-x86_64", "linux-x86_64", "linux-arm64"]
+
+[run]
+command = ["bin/oura"]
+runtime = "binary"
+
+[behavior]
+skill = "SKILL.md"
+clients = ["claude", "codex", "gemini"]
+
+[permissions]
+network = true                   # Oura's API and its OAuth token endpoint
+secrets = ["oura.*"]             # oura.client (a self-hosted Pointman's OAuth client) and oura.<label> (each account)
+
+# Only for a self-hosted Pointman: an Oura API application of its own (https://cloud.ouraring.com/oauth/applications),
+# whose redirect URI is that Pointman's /oauth/callback. A hosted Pointman signs in with its shared client, whose
+# redirect is https://api.pointman.ai/v1/oauth/oura/callback, and needs none.
+[[credentials]]
+id = "client"
+title = "Your Oura application"
+help = "Only for a self-hosted Pointman: a hosted one signs in with Pointman's own. At cloud.ouraring.com/oauth/applications make an application with redirect URI https://<your Pointman>/oauth/callback. Paste its client ID, a space, then its secret."
+needed = 0
+item = "oura.client"
+value = '[A-Za-z0-9_-]{8,128}[\s:]+[A-Za-z0-9_-]{8,256}'
+placeholder = "client-id client-secret"
+
+# An Oura account: Sign in from the apps, kept as its access token, when it runs out, and its refresh token. Any
+# number, each with its own label.
+[[credentials]]
+id = "account"
+title = "Oura account"
+help = "Sign in to Oura and allow every box. Give each account its own label (me). A sign-in lasts 30 days."
+item = "oura.{label}"
+value = '[A-Za-z0-9._~+/=-]{16,4096} [0-9]{9,11}( [A-Za-z0-9._~+/=-]{8,4096})?'
+placeholder = "signed in from the app"
+sign_in = true
+shared_client = "oura"
+
+[[commands]]
+kind = "oura.accounts"
+title = "Oura accounts and whether they work"
+slash = "accounts"
+summary = "Each Oura account signed in: its label, its address, and until when its sign-in lasts"
+
+# From AccountsParams in proto/oura/v1/oura.proto: `pointman-extension manifest write`
+[commands.params]
+type = "object"
+description = "oura.accounts: each Oura account signed in, whose it is, and until when its sign-in lasts."
+additionalProperties = false
+
+[[commands]]
+kind = "oura.day"
+title = "A day's scores (date?)"
+slash = "day"
+summary = "One day's sleep, readiness and activity scores, and the night's sleep, HRV and heart rate"
+
+# From DayParams in proto/oura/v1/oura.proto: `pointman-extension manifest write`
+[commands.params]
+type = "object"
+description = "oura.day: one day's scores and the night before it, in a line each: sleep, readiness and activity."
+additionalProperties = false
+
+[commands.params.properties.date]
+type = "string"
+description = "The day (2026-11-20), as Oura dates it: a night counts for the day it ends on. Empty: the latest day with scores."
+maxLength = 10
+pattern = "^([0-9]{4}-[0-9]{2}-[0-9]{2})?$"
+
+[commands.params.properties.account]
+type = "string"
+description = "The label of the Oura account. Empty: the account setting's, else every account signed in."
+maxLength = 32
+pattern = "^([a-z0-9][a-z0-9._-]*)?$"
+
+[[commands]]
+kind = "oura.data"
+title = "Oura records (kind, from, to?)"
+slash = "data"
+summary = "Oura's records of one kind between two days: sleep periods, heart rate, workouts, stress and more"
+
+# From DataParams in proto/oura/v1/oura.proto: `pointman-extension manifest write`
+[commands.params]
+type = "object"
+description = "oura.data: Oura's own records of one kind between two days, as it gives them."
+required = ["kind", "from"]
+additionalProperties = false
+
+[commands.params.properties.kind]
+type = "string"
+description = "What: daily_sleep, daily_readiness and daily_activity are each day's scores and their parts; sleep is each sleep period (stages, heart rate, HRV); heartrate is every reading (5 minutes apart, closer in workouts)."
+enum = ["daily_sleep", "sleep", "daily_readiness", "daily_activity", "heartrate", "workout", "session", "daily_spo2", "daily_stress", "daily_resilience", "daily_cardiovascular_age", "vo2_max", "sleep_time", "tag", "enhanced_tag", "rest_mode_period"]
+
+[commands.params.properties.from]
+type = "string"
+description = "From which day (2026-11-13), or for heartrate a time (RFC 3339)."
+minLength = 10
+maxLength = 40
+
+[commands.params.properties.to]
+type = "string"
+description = "Until which day, that day included, as from says it. Empty: today."
+maxLength = 40
+
+[commands.params.properties.account]
+type = "string"
+description = "The label of the Oura account. Empty: the account setting's, else every account signed in."
+maxLength = 32
+pattern = "^([a-z0-9][a-z0-9._-]*)?$"
+
+[commands.params.properties.full]
+type = "boolean"
+description = "Every series in full: a night's 5-minute stages and heart rate, a day's minute-by-minute MET. Left out, each long one says how many items it has."
+
+[[commands]]
+kind = "oura.add"
+title = "Add an Oura account"
+slash = "add"
+form = "account"
+summary = "Sign an Oura account in, on every node"
+
+# From AddParams in proto/oura/v1/oura.proto: `pointman-extension manifest write`
+[commands.params]
+type = "object"
+description = "oura.add: an Oura account's sign-in, added in the apps."
+additionalProperties = false
+
+[commands.params.properties.name]
+type = "string"
+description = "What to call it (me): lowercase letters, digits, . _ -"
+maxLength = 32
+pattern = "^([a-z0-9][a-z0-9._-]*)?$"
+
+[[commands]]
+kind = "oura.client"
+title = "Add your Oura application"
+slash = "client"
+form = "client"
+summary = "A self-hosted Pointman's own Oura API application"
+
+# From ClientParams in proto/oura/v1/oura.proto: `pointman-extension manifest write`
+[commands.params]
+type = "object"
+description = "oura.client: a self-hosted Pointman's own Oura API application, added in the apps."
+additionalProperties = false
+
+# From Settings in proto/oura/v1/oura.proto: `pointman-extension manifest write`
+[settings]
+type = "object"
+description = "The extension's settings, per machine."
+additionalProperties = false
+
+[settings.properties.account]
+type = "string"
+description = "The label of the Oura account a call uses when it names none (me, for the vault's oura.me). Empty: every one signed in."
+maxLength = 32
+pattern = "^([a-z0-9][a-z0-9._-]*)?$"

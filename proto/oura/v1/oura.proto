@@ -1,0 +1,119 @@
+// The oura extension's commands and settings: the source of extension.toml's `params` and `[settings]` schemas.
+// Command `oura.<verb>` takes `<Verb>Params` and answers `<Verb>Result`. A field's comment is its description, and
+// its buf.validate rules are its limits. Oura's own words are from its API v2 reference
+// (https://cloud.ouraring.com/v2/docs).
+syntax = "proto3";
+
+package oura.v1;
+
+import "buf/validate/validate.proto";
+
+// The extension's settings, per machine.
+message Settings {
+  // The label of the Oura account a call uses when it names none (me, for the vault's oura.me). Empty: every one signed in.
+  string account = 1 [(buf.validate.field).string = {max_len: 32, pattern: "^([a-z0-9][a-z0-9._-]*)?$"}];
+}
+
+// An Oura account that couldn't be asked, and why.
+message Problem {
+  string account = 1;
+  string error = 2;
+}
+
+// oura.accounts: each Oura account signed in, whose it is, and until when its sign-in lasts.
+message AccountsParams {}
+
+message AccountsResult {
+  string text = 1;
+  repeated Account accounts = 2;
+}
+
+message Account {
+  // Its label: the part after oura. in the vault (me, for oura.me).
+  string label = 1;
+  // Its address, as Oura says it.
+  string email = 2;
+  // Whether Oura took its sign-in just now.
+  bool works = 3;
+  // Why not, when it doesn't.
+  string error = 4;
+  // When its sign-in runs out (RFC 3339): sign in again with /oura add <label> before then.
+  string until = 5;
+}
+
+// oura.day: one day's scores and the night before it, in a line each: sleep, readiness and activity.
+message DayParams {
+  // The day (2026-11-20), as Oura dates it: a night counts for the day it ends on. Empty: the latest day with scores.
+  string date = 1 [(buf.validate.field).string = {max_len: 10, pattern: "^([0-9]{4}-[0-9]{2}-[0-9]{2})?$"}];
+  // The label of the Oura account. Empty: the account setting's, else every account signed in.
+  string account = 2 [(buf.validate.field).string = {max_len: 32, pattern: "^([a-z0-9][a-z0-9._-]*)?$"}];
+}
+
+message DayResult {
+  string text = 1;
+  repeated Day days = 2;
+  repeated Problem failed = 3;
+}
+
+// One account's day. A score Oura hasn't made yet is 0.
+message Day {
+  string account = 1;
+  string day = 2;
+  int32 sleep_score = 3;
+  int32 readiness_score = 4;
+  int32 activity_score = 5;
+  // The night's main sleep, in seconds.
+  int32 total_sleep = 6;
+  int32 time_in_bed = 7;
+  int32 deep_sleep = 8;
+  int32 rem_sleep = 9;
+  // Percent of the time in bed asleep.
+  int32 efficiency = 10;
+  // Milliseconds.
+  int32 average_hrv = 11;
+  int32 lowest_heart_rate = 12;
+  string bedtime_start = 13;
+  string bedtime_end = 14;
+  // Degrees Celsius from the person's usual.
+  double temperature_deviation = 15;
+  int32 steps = 16;
+  int32 active_calories = 17;
+}
+
+// oura.data: Oura's own records of one kind between two days, as it gives them.
+message DataParams {
+  // What: daily_sleep, daily_readiness and daily_activity are each day's scores and their parts; sleep is each sleep period (stages, heart rate, HRV); heartrate is every reading (5 minutes apart, closer in workouts).
+  string kind = 1 [(buf.validate.field).required = true, (buf.validate.field).string = {in: ["daily_sleep", "sleep", "daily_readiness", "daily_activity", "heartrate", "workout", "session", "daily_spo2", "daily_stress", "daily_resilience", "daily_cardiovascular_age", "vo2_max", "sleep_time", "tag", "enhanced_tag", "rest_mode_period"]}];
+  // From which day (2026-11-13), or for heartrate a time (RFC 3339).
+  string from = 2 [(buf.validate.field).required = true, (buf.validate.field).string = {min_len: 10, max_len: 40}];
+  // Until which day, that day included, as from says it. Empty: today.
+  string to = 3 [(buf.validate.field).string.max_len = 40];
+  // The label of the Oura account. Empty: the account setting's, else every account signed in.
+  string account = 4 [(buf.validate.field).string = {max_len: 32, pattern: "^([a-z0-9][a-z0-9._-]*)?$"}];
+  // Every series in full: a night's 5-minute stages and heart rate, a day's minute-by-minute MET. Left out, each long one says how many items it has.
+  bool full = 5;
+}
+
+message DataResult {
+  // A line saying what, then each record as a line of JSON.
+  string text = 1;
+  int32 count = 2;
+  repeated Problem failed = 3;
+}
+
+// oura.add: an Oura account's sign-in, added in the apps.
+message AddParams {
+  // What to call it (me): lowercase letters, digits, . _ -
+  string name = 1 [(buf.validate.field).string = {max_len: 32, pattern: "^([a-z0-9][a-z0-9._-]*)?$"}];
+}
+
+message AddResult {
+  string text = 1;
+}
+
+// oura.client: a self-hosted Pointman's own Oura API application, added in the apps.
+message ClientParams {}
+
+message ClientResult {
+  string text = 1;
+}

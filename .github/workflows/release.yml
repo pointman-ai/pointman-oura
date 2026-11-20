@@ -1,0 +1,91 @@
+# The extension's release (extension.toml: `runtime = "binary"`, `command = ["bin/<id>"]`; Pointman's
+# docs/dev/extensions.md, "Compiled extensions").
+#
+# Push a tag that's extension.toml's version (`git tag v0.7.0 && git push origin v0.7.0`): each
+# platform is built on its own runner and packed as <id>-<version>-<platform>.tar.gz, the files at
+# its top (extension.toml, bin/<id>, SKILL.md: the agents' guidance its [behavior] names, README.md, LICENSE). A first job makes the tag's release
+# as a draft, each build uploads its archive to it, and a last job publishes it once they're all up,
+# so core's `released` delivery finds each platform's build; one missing is refused. The archives go
+# straight onto the release, never through Actions' artifact storage: that storage is the account's,
+# and once it's full no build can hand its archive on.
+#
+# Linux builds are musl, so static: they run on any distribution, NixOS included, whose loader
+# isn't where a glibc build looks for it. Both Macs build on macos-14, the Intel one cross-compiled
+# (GitHub retired its macos-13 runners), so that's the one build whose tests don't run.
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  BIN: ""                 # the cargo binary's name, when it isn't the extension's id
+
+jobs:
+  draft:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: The tag's release, a draft until every platform's build is on it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --draft
+
+  build:
+    needs: draft
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { platform: macos-arm64, runner: blacksmith-6vcpu-macos-15, target: aarch64-apple-darwin, test: true }
+          - { platform: macos-x86_64, runner: blacksmith-6vcpu-macos-15, target: x86_64-apple-darwin, test: false }
+          - { platform: linux-x86_64, runner: blacksmith-4vcpu-ubuntu-2404, target: x86_64-unknown-linux-musl, test: true }
+          - { platform: linux-arm64, runner: blacksmith-4vcpu-ubuntu-2404-arm, target: aarch64-unknown-linux-musl, test: true }
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Its id and version, and the tag's
+        run: |
+          id=$(sed -n 's/^id = "\(.*\)"/\1/p' extension.toml | head -1)
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' extension.toml | head -1)
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "the tag is $GITHUB_REF_NAME but extension.toml's version is $version" >&2
+            exit 1
+          fi
+          echo "ID=$id" >> "$GITHUB_ENV"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - if: matrix.test
+        run: cargo test --locked --target ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Pack ${{ matrix.platform }}
+        run: |
+          mkdir -p pkg/bin
+          cp "target/${{ matrix.target }}/release/${BIN:-$ID}" "pkg/bin/$ID"
+          chmod 755 "pkg/bin/$ID"
+          cp extension.toml SKILL.md README.md LICENSE pkg/
+          tar -czf "$ID-$VERSION-${{ matrix.platform }}.tar.gz" -C pkg extension.toml SKILL.md bin README.md LICENSE
+      - name: Its archive, on the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          command -v gh >/dev/null || brew install gh
+          gh release upload "$GITHUB_REF_NAME" "$ID-$VERSION-${{ matrix.platform }}.tar.gz" --repo "$GITHUB_REPOSITORY" --clobber
+
+  release:
+    needs: build
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: The release, published with every platform's build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
