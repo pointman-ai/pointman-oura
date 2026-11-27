@@ -11,10 +11,10 @@
 [extension]
 id = "oura"
 name = "Oura"
-version = "0.1.0"
+version = "0.2.0"
 publisher = "aurelio"
 summary = "Oura health data for every agent: sleep, readiness, activity, heart rate and workouts, read only, with any number of Oura accounts."
-node = ">=0.4.12"
+node = ">=0.6,<1"
 platforms = ["macos-arm64", "macos-x86_64", "linux-x86_64", "linux-arm64"]
 
 [run]
@@ -23,7 +23,7 @@ runtime = "binary"
 
 [behavior]
 skill = "SKILL.md"
-clients = ["claude", "codex", "gemini"]
+harnesses = ["claude", "codex", "gemini"]
 
 [permissions]
 network = true                   # Oura's API and its OAuth token endpoint
