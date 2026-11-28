@@ -1,6 +1,6 @@
 [package]
 name = "oura"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Oura health data on Pointman's nodes, for every agent: sleep, readiness, activity and heart rate, read only."
 license = "MIT"
